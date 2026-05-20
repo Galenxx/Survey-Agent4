@@ -1,0 +1,90 @@
+"""任务隔离存储模块"""
+import os
+import json
+import uuid
+from datetime import datetime
+from typing import Optional
+from slugify import slugify
+
+
+class TaskStorage:
+    """每次运行的任务隔离存储"""
+
+    def __init__(self, task_name: str, base_dir: str = "outputs"):
+        self.task_name = task_name
+        self.base_dir = base_dir
+        self.task_id = datetime.now().strftime("%Y-%m-%d_%H%M%S") + "_" + slugify(task_name)
+        self.task_dir = os.path.join(base_dir, self.task_id)
+
+        self.logs_dir = os.path.join(self.task_dir, "logs")
+        self.papers_dir = os.path.join(self.task_dir, "papers")
+        self.data_dir = os.path.join(self.task_dir, "data")
+
+        self._ensure_dirs()
+
+        self.manifest = {
+            "task_id": self.task_id,
+            "task_name": task_name,
+            "start_time": datetime.now().isoformat(),
+            "status": "running",
+        }
+        self._save_manifest()
+
+    def _ensure_dirs(self):
+        """创建必要的目录结构"""
+        for dir_path in [self.logs_dir, self.papers_dir, self.data_dir]:
+            os.makedirs(dir_path, exist_ok=True)
+
+    def _save_manifest(self):
+        """保存任务清单"""
+        manifest_path = os.path.join(self.task_dir, "task_manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(self.manifest, f, ensure_ascii=False, indent=2)
+
+    def log(self, agent_name: str, content: str):
+        """保存 Agent 日志"""
+        log_path = os.path.join(self.logs_dir, f"{agent_name}.log")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}]\n{content}\n\n")
+
+    def save_data(self, filename: str, data: dict):
+        """保存 JSON 数据"""
+        data_path = os.path.join(self.data_dir, filename)
+        with open(data_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return data_path
+
+    def save_search_results(self, data: dict):
+        """保存搜索结果"""
+        return self.save_data("search_results.json", data)
+
+    def save_filtered_papers(self, data: dict):
+        """保存筛选后的论文"""
+        return self.save_data("filtered_papers.json", data)
+
+    def save_gap_analysis(self, data: dict):
+        """保存 Gap 分析结果"""
+        return self.save_data("gap_analysis.json", data)
+
+    def get_papers_dir(self) -> str:
+        """获取论文目录路径"""
+        return self.papers_dir
+
+    def get_report_path(self) -> str:
+        """获取报告文件路径"""
+        return os.path.join(self.task_dir, "report.md")
+
+    def complete(self, summary: str = ""):
+        """标记任务完成"""
+        self.manifest["status"] = "completed"
+        self.manifest["end_time"] = datetime.now().isoformat()
+        self.manifest["summary"] = summary
+        self._save_manifest()
+
+    def fail(self, error: str):
+        """标记任务失败"""
+        self.manifest["status"] = "failed"
+        self.manifest["end_time"] = datetime.now().isoformat()
+        self.manifest["error"] = error
+        self._save_manifest()
