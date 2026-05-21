@@ -41,12 +41,24 @@ class TaskStorage:
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(self.manifest, f, ensure_ascii=False, indent=2)
 
-    def log(self, agent_name: str, content: str):
-        """保存 Agent 日志"""
-        log_path = os.path.join(self.logs_dir, f"{agent_name}.log")
+    def get_agent_log_path(self, agent_name: str) -> str:
+        """获取指定 Agent 的日志文件路径"""
+        return os.path.join(self.logs_dir, f"{agent_name}.log")
+
+    def read_agent_log(self, agent_name: str) -> str:
+        """读取指定 Agent 的完整日志内容"""
+        log_path = self.get_agent_log_path(agent_name)
+        if not os.path.exists(log_path):
+            return ""
+        with open(log_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def log(self, agent_name: str, category: str, content: str):
+        """保存 Agent 日志（单行格式：[时间] [类别] 内容）"""
+        log_path = self.get_agent_log_path(agent_name)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}]\n{content}\n\n")
+            f.write(f"[{timestamp}] [{category}] {content}\n")
 
     def save_data(self, filename: str, data: dict):
         """保存 JSON 数据"""
