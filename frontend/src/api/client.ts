@@ -19,9 +19,6 @@ export interface AgentLogEntry {
 
 export interface TaskCreate {
   query: string
-  gap_direction?: string
-  time_range?: string
-  max_results?: number
 }
 
 export interface TaskCreateResponse {

@@ -70,8 +70,8 @@ def set_sse_broadcaster(broadcaster: Callable[[str, dict], None]) -> None:
     _sse_broadcaster = broadcaster
 
 
-def _broadcast(task_id: str, event_type: str, data: dict) -> None:
-    _dbg(f"_broadcast called: task={task_id} type={event_type} broadcaster={'SET' if _sse_broadcaster else 'NONE'}")
+def broadcast_event(task_id: str, event_type: str, data: dict) -> None:
+    _dbg(f"broadcast_event called: task={task_id} type={event_type} broadcaster={'SET' if _sse_broadcaster else 'NONE'}")
     if _sse_broadcaster:
         _dbg(f"Broadcasting: task={task_id} type={event_type}")
         _sse_broadcaster(task_id, {"type": event_type, **data})
@@ -89,12 +89,77 @@ def _broadcast_agent_log(
         return
     try:
         log_content = task_storage.read_agent_log(agent_key)
-        _broadcast(task_id, "agent_log", {
+        broadcast_event(task_id, "agent_log", {
             "agent_key": agent_key,
             "log_content": log_content,
         })
     except Exception:
         pass
+
+
+import json
+import re
+import threading
+from typing import Any
+
+_ROUTER_OUTPUT_KEY = "router_parsed_params"
+# Module-level storage for parsed router params (thread-safe)
+_router_params: dict[str, Any] = {}
+_router_params_lock = threading.Lock()
+
+
+def set_router_params(params: dict[str, Any]) -> None:
+    with _router_params_lock:
+        _router_params.clear()
+        _router_params.update(params)
+
+
+def get_router_params() -> dict[str, Any]:
+    with _router_params_lock:
+        return dict(_router_params)
+
+
+def parse_router_output(raw_output: str) -> dict[str, Any]:
+    """Extract JSON from router output and return parsed params dict."""
+    # Try to find JSON block in the output
+    try:
+        # Try direct JSON parse first
+        return json.loads(raw_output)
+    except json.JSONDecodeError:
+        pass
+
+    # Try finding JSON in markdown code blocks
+    patterns = [
+        r'```(?:json)?\s*\n?(.*?)\n?```',
+        r'\{[^{}]*"topic"[^{}]*\}',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, raw_output, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0) if m.lastindex == 0 else m.group(1))
+            except json.JSONDecodeError:
+                try:
+                    return json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    pass
+
+    # Fallback: try to extract individual fields with regex
+    result = {}
+    field_map = [
+        ("topic", r'"topic"\s*:\s*"([^"]*)"'),
+        ("search_query", r'"search_query"\s*:\s*"([^"]*)"'),
+        ("gap_direction", r'"gap_direction"\s*:\s*"([^"]*)"'),
+        ("time_range", r'"time_range"\s*:\s*"([^"]*)"'),
+        ("max_results", r'"max_results"\s*:\s*(\d+)'),
+    ]
+    for field, pattern in field_map:
+        m = re.search(pattern, raw_output)
+        if m:
+            val = m.group(1)
+            result[field] = int(val) if field == "max_results" else val
+
+    return result if result else {}
 
 
 # Map CrewAI agent roles to our agent names
@@ -187,14 +252,14 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             raw_inputs = getattr(event, "inputs", None)
             if raw_inputs and isinstance(raw_inputs, dict):
                 inputs = {k: _safe_str(v, 200) for k, v in raw_inputs.items()}
-            _broadcast(task_id, "crew_started", {"crew_name": crew_name, "inputs": inputs})
+            broadcast_event(task_id, "crew_started", {"crew_name": crew_name, "inputs": inputs})
         except Exception as e:
             _dbg(f"_on_crew_started EXCEPTION: {e}")
 
     def _on_crew_completed(event: CrewKickoffCompletedEvent) -> None:
         try:
             output = _safe_str(getattr(event, "output", "") or "", 500)
-            _broadcast(task_id, "crew_completed", {"output": output})
+            broadcast_event(task_id, "crew_completed", {"output": output})
             # Broadcast all agent logs at the end
             if task_storage:
                 for agent_key in ["router", "searcher", "filter", "analyzer", "synthesizer", "manager"]:
@@ -205,7 +270,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
     def _on_crew_failed(event: CrewKickoffFailedEvent) -> None:
         try:
             error = _safe_str(getattr(event, "error", "") or "", 500)
-            _broadcast(task_id, "crew_failed", {"error": error})
+            broadcast_event(task_id, "crew_failed", {"error": error})
             # Broadcast all agent logs on failure too
             if task_storage:
                 for agent_key in ["router", "searcher", "filter", "analyzer", "synthesizer", "manager"]:
@@ -229,7 +294,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             if task_id_attr and agent_key:
                 _set_task_agent_mapping(task_id_attr, agent_key)
             _dbg(f"task_started: task_id={task_id_attr} name={name} agent_key={agent_key}")
-            _broadcast(task_id, "task_started", {"task_id": task_id_attr, "task_name": name, "agent_key": agent_key})
+            broadcast_event(task_id, "task_started", {"task_id": task_id_attr, "task_name": name, "agent_key": agent_key})
         except Exception:
             pass
 
@@ -238,7 +303,20 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             task_id_attr = str(getattr(event, "task_id", "") or "")
             name = _safe_str(_task_name(getattr(event, "task", None)))
             output = _safe_str(getattr(event, "output", "") or "", 500)
-            _broadcast(task_id, "task_completed", {"task_id": task_id_attr, "task_name": name, "output": output})
+            agent_key = _get_agent_for_task(task_id_attr)
+
+            # Parse router output and store parsed params for downstream tasks
+            if agent_key == "router" and output:
+                parsed = parse_router_output(output)
+                if parsed:
+                    _write_agent_log(task_storage, "router", "ROUTER_PARSED",
+                        f"Parsed router params: {json.dumps(parsed, ensure_ascii=False)}")
+                    # Store in module globals for downstream tools/agents to read
+                    set_router_params(parsed)
+                    # Broadcast the parsed params so the frontend can see them
+                    broadcast_event(task_id, "router_params", parsed)
+
+            broadcast_event(task_id, "task_completed", {"task_id": task_id_attr, "task_name": name, "output": output})
             # Clear the task→agent mapping now that the task is done
             if task_id_attr:
                 _clear_task_agent_mapping(task_id_attr)
@@ -250,7 +328,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             task_id_attr = str(getattr(event, "task_id", "") or "")
             name = _safe_str(_task_name(getattr(event, "task", None)))
             error = _safe_str(getattr(event, "error", "") or "", 500)
-            _broadcast(task_id, "task_failed", {"task_id": task_id_attr, "task_name": name, "error": error})
+            broadcast_event(task_id, "task_failed", {"task_id": task_id_attr, "task_name": name, "error": error})
         except Exception:
             pass
 
@@ -262,7 +340,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             name = _safe_str(_task_name(getattr(event, "task", None)))
             prompt = _safe_str(getattr(event, "prompt", "") or "", 1000)
             _set_current_agent(task_id, agent_key)
-            _broadcast(task_id, "agent_started", {
+            broadcast_event(task_id, "agent_started", {
                 "agent_role": role,
                 "agent_key": agent_key,
                 "task_name": name,
@@ -284,7 +362,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             agent_key = _agent_name_from_role(role)
             name = _safe_str(_task_name(getattr(event, "task", None)))
             output = _safe_str(getattr(event, "output", "") or "", 2000)
-            _broadcast(task_id, "agent_completed", {
+            broadcast_event(task_id, "agent_completed", {
                 "agent_role": role,
                 "agent_key": agent_key,
                 "task_name": name,
@@ -309,7 +387,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             agent_key = _agent_name_from_role(role)
             name = _safe_str(_task_name(getattr(event, "task", None)))
             error = _safe_str(getattr(event, "error", "") or "", 300)
-            _broadcast(task_id, "agent_error", {
+            broadcast_event(task_id, "agent_error", {
                 "agent_role": role,
                 "agent_key": agent_key,
                 "task_name": name,
@@ -337,7 +415,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             tool_args = _safe_dict(raw_args if isinstance(raw_args, dict) else {}, 500)
             input_data = getattr(event, "input", None)
             input_str = _safe_str(str(input_data), 2000) if input_data else ""
-            _broadcast(task_id, "tool_started", {
+            broadcast_event(task_id, "tool_started", {
                 "agent_role": agent_role,
                 "agent_key": agent_key,
                 "tool_name": tool_name,
@@ -370,7 +448,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
             task_n = _safe_str(getattr(event, "task_name", "") or "")
             output = _safe_str(getattr(event, "output", "") or "", 2000)
             from_cache = bool(getattr(event, "from_cache", False))
-            _broadcast(task_id, "tool_finished", {
+            broadcast_event(task_id, "tool_finished", {
                 "agent_role": agent_role,
                 "agent_key": agent_key,
                 "tool_name": tool_name,
@@ -400,7 +478,7 @@ def _register_crew_event_handlers(task_id: str, task_storage: Optional["TaskStor
                 agent_key = _agent_name_from_role(agent_role)
             task_n = _safe_str(getattr(event, "task_name", "") or "")
             error = _safe_str(getattr(event, "error", "") or "", 300)
-            _broadcast(task_id, "tool_error", {
+            broadcast_event(task_id, "tool_error", {
                 "agent_role": agent_role,
                 "agent_key": agent_key,
                 "tool_name": tool_name,
@@ -476,7 +554,7 @@ def _run_crew_task(task_id: str, task_storage: "TaskStorage") -> None:
 
         from src.storage.tool_wrapper import set_global_broadcaster
         _dbg("setting global broadcaster...")
-        set_global_broadcaster(_broadcast)
+        set_global_broadcaster(broadcast_event)
         _dbg(f"broadcaster set: {_sse_broadcaster is not None}")
 
         _dbg("importing crew...")

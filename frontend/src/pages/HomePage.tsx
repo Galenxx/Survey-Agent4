@@ -4,23 +4,10 @@ import { api, TaskStatus } from '../api/client'
 import TaskCard from '../components/TaskCard'
 import { Search, Loader2, BookOpen, TrendingUp, Target } from 'lucide-react'
 
-const GAP_DIRECTIONS = [
-  { value: '', label: 'All Gap Types' },
-  { value: 'Methodological Gap', label: 'Methodological Gap (方法论空白)' },
-  { value: 'Knowledge Gap', label: 'Knowledge Gap (知识空白)' },
-  { value: 'Evidence Gap', label: 'Evidence Gap (证据空白)' },
-  { value: 'Theoretical Gap', label: 'Theoretical Gap (理论空白)' },
-  { value: 'Population Gap', label: 'Population Gap (人群空白)' },
-  { value: 'Contextual/Time Gap', label: 'Contextual/Time Gap (情境/时间空白)' },
-]
-
 export default function HomePage() {
   const navigate = useNavigate()
 
   const [query, setQuery] = useState('')
-  const [gapDirection, setGapDirection] = useState('')
-  const [timeRange, setTimeRange] = useState('2022-')
-  const [maxResults, setMaxResults] = useState(50)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [recentTasks, setRecentTasks] = useState<TaskStatus[]>([])
@@ -41,12 +28,7 @@ export default function HomePage() {
     setSubmitError('')
 
     try {
-      const res = await api.createTask({
-        query: query.trim(),
-        gap_direction: gapDirection,
-        time_range: timeRange,
-        max_results: maxResults,
-      })
+      const res = await api.createTask({ query: query.trim() })
       navigate(`/tasks/${encodeURIComponent(res.task_id)}`)
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to create task')
@@ -98,60 +80,14 @@ export default function HomePage() {
             <textarea
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="e.g., LLM在职位推荐领域的方法论空白"
+              placeholder="e.g., 分析LLM在职位推荐领域的方法论空白，重点关注2022年以来的研究"
               rows={3}
               className="input-field resize-none"
               required
             />
             <p className="mt-1 text-xs text-slate-500">
-              Describe your research topic in Chinese or English
+              支持中文和英文，Router Agent 会自动解析研究主题、搜索关键词，并推断 gap 类型、年份范围和论文数量
             </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Gap Direction
-              </label>
-              <select
-                value={gapDirection}
-                onChange={e => setGapDirection(e.target.value)}
-                className="input-field"
-              >
-                {GAP_DIRECTIONS.map(opt => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Year Range
-              </label>
-              <input
-                type="text"
-                value={timeRange}
-                onChange={e => setTimeRange(e.target.value)}
-                placeholder="e.g., 2020-2026"
-                className="input-field"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              Max Papers to Search
-            </label>
-            <input
-              type="number"
-              value={maxResults}
-              onChange={e => setMaxResults(parseInt(e.target.value) || 50)}
-              min={1}
-              max={200}
-              className="input-field max-w-40"
-            />
           </div>
 
           {submitError && (

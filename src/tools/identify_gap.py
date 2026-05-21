@@ -48,9 +48,21 @@ class GapIdentifierTool(BaseTool):
         if gap_direction:
             gap_types_to_analyze = {gap_direction: GAP_TYPES.get(gap_direction, gap_direction)}
             gap_types_str = f"***{gap_direction}***: {GAP_TYPES.get(gap_direction, gap_direction)}"
+            json_example = f'"{gap_direction}": {{"exists": true/false, "description": "描述"}}'
         else:
             gap_types_to_analyze = GAP_TYPES
             gap_types_str = "\n".join([f"***type***: {desc}" for type_, desc in GAP_TYPES.items()])
+            json_example = (
+                '"Knowledge Gap": {"exists": true/false, "description": "描述"},\n'
+                '    "Methodological Gap": {"exists": true/false, "description": "描述"},\n'
+                '    "Evidence Gap": {"exists": true/false, "description": "描述"},\n'
+                '    "Theoretical Gap": {"exists": true/false, "description": "描述"},\n'
+                '    "Population Gap": {"exists": true/false, "description": "描述"},\n'
+                '    "Contextual/Time Gap": {"exists": true/false, "description": "描述"}}'
+            )
+
+        scope_note = f"请仅分析以下这一类 gap：{gap_types_str}" if gap_direction else f"请分析以下六类 gap：{gap_types_str}"
+        json_note = "返回 JSON 格式（只包含指定的 gap 类型）：" if gap_direction else "返回 JSON 格式（包含所有 gap 类型）："
 
         prompt = f"""你是一个学术研究 gap 分析专家。分析以下论文在研究主题下的空白（gap）。
 
@@ -61,19 +73,15 @@ class GapIdentifierTool(BaseTool):
 论文内容:
 {paper_text[:8000]}
 
-请分析以下 {('这 ' + str(len(gap_types_to_analyze)) + ' 类') if gap_direction else '六'} gap：
-
-{gap_types_str}
+{scope_note}
 
 对于每类 gap，判断该论文是否存在此类 gap。如果存在，给出具体描述；如果不存在，说明原因。
 
-返回 JSON 格式：
+{json_note}
 {{
   "paper_title": "论文标题",
   "gaps": {{
-    "Knowledge Gap": {{"exists": true/false, "description": "描述"}},
-    "Methodological Gap": {{"exists": true/false, "description": "描述"}},
-    ...
+    {json_example}
   }}
 }}
 

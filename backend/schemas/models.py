@@ -5,10 +5,7 @@ from pydantic import BaseModel, Field
 
 class TaskCreate(BaseModel):
     """POST /tasks request body."""
-    query: str = Field(..., min_length=1, description="Research query for gap analysis")
-    gap_direction: str = Field(default="", description="Specific gap type to focus on (e.g. 'Methodological Gap'), empty means all types")
-    time_range: str = Field(default="2022-", description="Year range filter, e.g. '2020-2026'")
-    max_results: int = Field(default=50, ge=1, le=200, description="Maximum number of papers to search")
+    query: str = Field(..., min_length=1, description="User's natural language research query")
 
 
 class AgentLogEntry(BaseModel):
