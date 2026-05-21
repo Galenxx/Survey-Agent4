@@ -4,8 +4,14 @@ from crewai.llms.providers.openai_compatible.completion import OpenAICompatibleC
 from typing import Any
 
 
-def create_synthesizer_agent(tools: list[Any] | None = None):
-    """创建 Synthesizer Agent（使用 deepseek-chat）"""
+def create_synthesizer_agent(tools: list[Any] | None = None, llm=None):
+    """创建 Synthesizer Agent（默认使用 deepseek-chat）"""
+    if llm is None:
+        llm = OpenAICompatibleCompletion(
+            model="deepseek-chat",
+            provider="deepseek",
+            temperature=0,
+        )
     return Agent(
         role="Research Report Synthesizer",
         goal="汇总 gap 分析结果，生成结构化的 Markdown 研究报告",
@@ -13,9 +19,5 @@ def create_synthesizer_agent(tools: list[Any] | None = None):
         verbose=True,
         allow_delegation=False,
         tools=tools,
-        llm=OpenAICompatibleCompletion(
-            model="deepseek-chat",
-            provider="deepseek",
-            temperature=0,
-        ),
+        llm=llm,
     )

@@ -41,7 +41,7 @@ python src/cli.py "帮我分析LLM在job recommendation领域的gap"
 ## 架构
 
 ```
-Manager Agent (glm-4.1)          # 总协调
+Manager Agent (glm-5.1)           # 总协调
 ├── Router Agent (deepseek-v4-pro)     # 分解查询
 ├── Searcher Agent (deepseek-v4-pro)   # 检索论文
 ├── Filter Agent (deepseek-v4-pro)     # 筛选相关性

@@ -4,8 +4,14 @@ from crewai.llms.providers.openai_compatible.completion import OpenAICompatibleC
 from typing import Any
 
 
-def create_router_agent(tools: list[Any] | None = None):
-    """创建 Router Agent（使用 deepseek-chat）"""
+def create_router_agent(tools: list[Any] | None = None, llm=None):
+    """创建 Router Agent（默认使用 deepseek-chat）"""
+    if llm is None:
+        llm = OpenAICompatibleCompletion(
+            model="deepseek-chat",
+            provider="deepseek",
+            temperature=0,
+        )
     return Agent(
         role="Research Query Router",
         goal="将用户自然语言需求转化为结构化的搜索查询",
@@ -13,9 +19,5 @@ def create_router_agent(tools: list[Any] | None = None):
         verbose=True,
         allow_delegation=False,
         tools=tools,
-        llm=OpenAICompatibleCompletion(
-            model="deepseek-chat",
-            provider="deepseek",
-            temperature=0,
-        ),
+        llm=llm,
     )

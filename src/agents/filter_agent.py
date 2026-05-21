@@ -4,8 +4,14 @@ from crewai.llms.providers.openai_compatible.completion import OpenAICompatibleC
 from typing import Any
 
 
-def create_filter_agent(tools: list[Any] | None = None):
-    """创建 Filter Agent（使用 deepseek-chat）"""
+def create_filter_agent(tools: list[Any] | None = None, llm=None):
+    """创建 Filter Agent（默认使用 deepseek-chat）"""
+    if llm is None:
+        llm = OpenAICompatibleCompletion(
+            model="deepseek-chat",
+            provider="deepseek",
+            temperature=0,
+        )
     return Agent(
         role="Paper Relevance Filter",
         goal="评估论文与研究主题的相关性，筛选高质量的相关论文",
@@ -13,9 +19,5 @@ def create_filter_agent(tools: list[Any] | None = None):
         verbose=True,
         allow_delegation=False,
         tools=tools,
-        llm=OpenAICompatibleCompletion(
-            model="deepseek-chat",
-            provider="deepseek",
-            temperature=0,
-        ),
+        llm=llm,
     )

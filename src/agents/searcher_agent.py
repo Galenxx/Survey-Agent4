@@ -4,8 +4,14 @@ from crewai.llms.providers.openai_compatible.completion import OpenAICompatibleC
 from typing import Any
 
 
-def create_searcher_agent(tools: list[Any] | None = None):
-    """创建 Searcher Agent（使用 deepseek-chat）"""
+def create_searcher_agent(tools: list[Any] | None = None, llm=None):
+    """创建 Searcher Agent（默认使用 deepseek-chat）"""
+    if llm is None:
+        llm = OpenAICompatibleCompletion(
+            model="deepseek-chat",
+            provider="deepseek",
+            temperature=0,
+        )
     return Agent(
         role="Academic Paper Searcher",
         goal="根据搜索查询在 arXiv 上检索相关论文并下载",
@@ -13,9 +19,5 @@ def create_searcher_agent(tools: list[Any] | None = None):
         verbose=True,
         allow_delegation=False,
         tools=tools,
-        llm=OpenAICompatibleCompletion(
-            model="deepseek-chat",
-            provider="deepseek",
-            temperature=0,
-        ),
+        llm=llm,
     )
