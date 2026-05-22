@@ -1,10 +1,11 @@
-"""Semantic Scholar 搜索工具"""
+"""Semantic Scholar 搜索工具（搜索后自动下载 PDF）"""
 import json
 import os
 import re
 import time
 import requests
 from crewai.tools import BaseTool
+from pydantic import Field
 
 
 def _rate_limited_request(url: str, params: dict, headers: dict, timeout: int = 30) -> requests.Response:
@@ -21,18 +22,51 @@ def _rate_limited_request(url: str, params: dict, headers: dict, timeout: int = 
     return response
 
 
+def _download_pdf(url: str, paper_id: str, output_dir: str) -> str:
+    """下载 PDF 文件，返回本地路径或错误信息"""
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        safe_name = re.sub(r'[<>:"/\\|?*]', "_", paper_id)
+        safe_name = safe_name.strip(". ")
+        if len(safe_name) > 200:
+            safe_name = safe_name[:200]
+        output_path = os.path.abspath(os.path.join(output_dir, f"{safe_name}.pdf"))
+        if os.path.exists(output_path):
+            return output_path
+        time.sleep(1.5)
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)"}, timeout=60, allow_redirects=True)
+        if response.status_code == 403:
+            return f"Error: Access forbidden (403)"
+        if response.status_code == 404:
+            return f"Error: PDF not found (404)"
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "")
+        if "pdf" not in content_type.lower() and not response.content.startswith(b"%PDF"):
+            return f"Error: Not a PDF (Content-Type: {content_type})"
+        with open(output_path, "wb") as f:
+            f.write(response.content)
+        return output_path
+    except requests.exceptions.Timeout:
+        return f"Error: Download timeout"
+    except requests.exceptions.HTTPError as e:
+        return f"Error: HTTP {e.response.status_code}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
 class SemanticScholarSearchTool(BaseTool):
-    """搜索 Semantic Scholar 论文数据库，只返回有可下载 PDF 的论文"""
+    """搜索 Semantic Scholar 论文数据库，只返回有可下载 PDF 的论文，并自动下载 PDF"""
 
     name: str = "semantic_scholar_search"
     description: str = (
-        "搜索 Semantic Scholar 论文数据库，只返回有可下载 PDF 的论文。 "
-        "返回论文 ID、标题、摘要、作者、年份、引用量、PDF 下载链接和 arXiv ID（如适用）。"
+        "搜索 Semantic Scholar 论文数据库，只返回有可下载 PDF 的论文，并自动下载 PDF。 "
+        "返回论文 ID、标题、摘要、作者、年份、引用量、PDF 下载链接、PDF 本地路径和 arXiv ID（如适用）。"
     )
+    output_dir: str = Field(default="papers")
 
     def _run(self, query: str, max_results: int = 50, year_range: str = "") -> str:
         """
-        执行 Semantic Scholar 搜索（仅返回有 PDF 的论文）
+        执行 Semantic Scholar 搜索（仅返回有 PDF 的论文），并自动下载 PDF
 
         Args:
             query: 搜索查询词
@@ -40,9 +74,11 @@ class SemanticScholarSearchTool(BaseTool):
             year_range: 年份范围，格式如 "2022-2026" 或 "2022-" 或 "-2026"
 
         Returns:
-            JSON 格式的论文列表（含 PDF 链接和 arXiv ID）
+            JSON 格式的论文列表（含 PDF 本地路径和 arXiv ID）
         """
+        output_dir = self.output_dir or "papers"
         try:
+            os.makedirs(output_dir, exist_ok=True)
             api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
             headers = {"x-api-key": api_key} if api_key else {}
             base_url = "https://api.semanticscholar.org/graph/v1/paper/search/bulk"
@@ -100,11 +136,15 @@ class SemanticScholarSearchTool(BaseTool):
                     if not pdf_url:
                         continue
 
-                    arxiv_id = self._extract_arxiv_id(pdf_url)
+                    paper_id = paper.get("paperId", "")
+                    arxiv_id = self._extract_arxiv_id(pdf_url) or ""
+
+                    # 自动下载 PDF
+                    pdf_path = _download_pdf(pdf_url, arxiv_id or paper_id, output_dir)
 
                     paper_info = {
-                        "id": paper.get("paperId", ""),
-                        "arxiv_id": arxiv_id or "",
+                        "id": paper_id,
+                        "arxiv_id": arxiv_id,
                         "title": paper.get("title", ""),
                         "authors": [
                             {"name": a.get("name", ""), "authorId": a.get("authorId", "")}
@@ -115,6 +155,7 @@ class SemanticScholarSearchTool(BaseTool):
                         "citationCount": paper.get("citationCount", 0),
                         "url": paper.get("url", ""),
                         "pdf_url": pdf_url,
+                        "pdf_path": pdf_path,
                         "pdf_status": oap.get("status", ""),
                     }
                     all_papers.append(paper_info)

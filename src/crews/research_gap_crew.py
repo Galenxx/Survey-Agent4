@@ -20,7 +20,6 @@ from src.agents.synthesizer_agent import create_synthesizer_agent
 from src.tools import (
     SemanticScholarSearchTool,
     ArxivSearchTool,
-    PdfDownloadTool,
     PdfToTextTool,
     RelevanceClassifierTool,
     GapIdentifierTool,
@@ -63,9 +62,9 @@ def _glm_llm(api_key: str = ""):
 def _wrap_tools(agent_key: str, task_storage: TaskStorage, papers_dir: str, tool_list):
     """为指定 agent 包装工具实例（带日志记录）"""
     def _inst(t_cls):
-        if t_cls == PdfDownloadTool:
-            return t_cls(output_dir=papers_dir)
         if t_cls == ArxivSearchTool:
+            return t_cls(output_dir=papers_dir)
+        if t_cls == SemanticScholarSearchTool:
             return t_cls(output_dir=papers_dir)
         return t_cls()
     return [wrap_tool_for_logging(_inst(t), agent_key=agent_key, task_storage=task_storage) for t in tool_list]
@@ -114,7 +113,7 @@ def create_research_gap_crew(
 
     router_tools = _wrap_tools("router", task_storage, papers_dir, [])
     searcher_tools = _wrap_tools("searcher", task_storage, papers_dir,
-        [SemanticScholarSearchTool, ArxivSearchTool, PdfDownloadTool])
+        [SemanticScholarSearchTool, ArxivSearchTool])
     filter_tools = _wrap_tools("filter", task_storage, papers_dir,
         [RelevanceClassifierTool])
     analyzer_tools = _wrap_tools("analyzer", task_storage, papers_dir,
@@ -157,47 +156,29 @@ def create_research_gap_crew(
 
 请按以下步骤执行：
 
-1. 使用 semantic_scholar_search 工具搜索 Semantic Scholar 论文数据库。
-2. 使用 arxiv_search 工具搜索 arXiv 论文数据库。
-3. 对两个数据源的搜索结果进行去重（按论文标题或 arXiv ID 精确匹配去重）。
-4. 对去重后的论文，逐篇检查是否有 PDF 下载链接或本地路径：
-   - 如果有 pdf_url，使用 pdf_download 工具下载 PDF。
-   - 如果论文已有本地 PDF 文件（在 papers_dir 目录下），直接使用已有文件。
-   - 如果没有 PDF 链接且无法下载，则标记该论文为"仅摘要"（不含 PDF）。
-5. 将下载的论文 PDF 保存到目录: {papers_dir}
+1. 使用 semantic_scholar_search 工具搜索 Semantic Scholar 论文数据库（该工具会自动下载 PDF 并在结果中返回 pdf_path）。搜索完成后，将工具返回的 JSON 结果（完整的原始 JSON，不要做任何修改）原样放在三个反引号内输出，例如：
+```
+{{"source": "semantic_scholar", "total": ..., "papers": [...]}}
+```
 
-**输出格式要求**：
-完成所有搜索和下载后，你必须返回一段**纯 JSON** 文本作为最终输出（不要有其他解释性文字）。JSON 结构如下：
+2. 使用 arxiv_search 工具搜索 arXiv 论文数据库（该工具会自动下载 PDF 并在结果中返回 pdf_path）。搜索完成后，同样将工具返回的 JSON 结果原样输出。
 
-{{
-  "dedup_stats": {{
-    "total_deduplicated": <去重后的论文总数>,
-    "with_pdf": <有 PDF 的论文数>,
-    "without_pdf": <无 PDF 的论文数>,
-    "from_semantic_scholar": <来自 S2 的论文数>,
-    "from_arxiv": <来自 arXiv 的论文数>
-  }},
-  "papers": [
-    {{
-      "id": "<论文 ID（首选 arXiv ID）>",
-      "arxiv_id": "<arXiv ID（如有）>",
-      "title": "<论文标题>",
-      "authors": "<所有作者，格式：First Last, First Last, ...>",
-      "year": "<发表年份>",
-      "abstract": "<摘要>",
-      "citation_count": <引用数>,
-      "pdf_path": "<本地 PDF 路径（如有）>",
-      "pdf_url": "<PDF 下载链接（如有）>",
-      "source": "<semantic_scholar 或 arxiv>"
-    }}
-  ]
-}}
+3. **重要**：以上两步完成后，不要重新生成 JSON，直接在回答中输出以下两个代码块（将刚才的原始结果粘贴进去）：
+
+代码块1（Semantic Scholar 结果）：
+```
+<在此处粘贴 semantic_scholar_search 返回的原始 JSON>
+```
+
+代码块2（arXiv 结果）：
+```
+<在此处粘贴 arxiv_search 返回的原始 JSON>
+```
 
 **关键要求**：
-- **必须对所有19篇论文都输出**，包括有 PDF 和没有 PDF 的
-- authors 字段必须是字符串，格式："Name1, Name2, Name3"
-- year 字段必须是字符串或数字，不能为空
-- 所有论文都必须列出，不能遗漏任何一篇""",
+- 必须原样输出工具返回的 JSON，不要重新生成字段，不要修改 pdf_path、authors、title 等任何值
+- 如果 arXiv 返回错误（如 "API error"），将该错误信息原样放入代码块2中
+- 不要添加任何额外的解释性文字，只需输出两个 JSON 代码块""",
         agent=searcher,
         expected_output="纯 JSON 格式的论文列表（无其他文字），包含所有去重后论文的元数据（ID、标题、作者、年份、摘要、PDF路径、来源）和去重统计",
     )
@@ -209,11 +190,46 @@ def create_research_gap_crew(
 研究主题: {topic}
 Gap 分析重点: {gap_direction if gap_direction else '全部类型（分析所有六类 gap）'}
 
-1. 对搜索结果中的每篇论文，使用 classify_relevance 工具判断相关性
-2. 筛选出与研究主题相关的论文（至少10篇）
-3. 返回相关论文列表
+上游 Searcher 任务返回了论文列表（含完整元数据：id、title、authors、year、abstract、pdf_path 等）。
 
-请使用 classify_relevance 工具逐篇评估论文相关性。""",
+请使用 classify_relevance 工具逐篇评估论文相关性。**调用时必须传入论文的所有元数据字段**：
+- paper_title: 论文标题
+- paper_abstract: 论文摘要
+- paper_id: 论文 ID
+- arxiv_id: arXiv ID（如有）
+- authors: 作者（格式："Name1, Name2, ..."）
+- year: 发表年份
+- pdf_path: PDF 本地路径
+- pdf_url: PDF 下载链接
+- source: 来源（semantic_scholar 或 arxiv）
+- citation_count: 引用数
+
+逐篇调用 classify_relevance 后，收集所有结果，筛选出 relevant=true 的论文，输出为 JSON 数组（不要有其他文字）：
+
+```json
+[
+  {{
+    "id": "...",
+    "arxiv_id": "...",
+    "title": "...",
+    "authors": "...",
+    "year": "...",
+    "abstract": "...",
+    "pdf_path": "D:\\\\...\\\\papers\\\\xxx.pdf",
+    "pdf_url": "...",
+    "source": "...",
+    "citation_count": ...,
+    "relevant": true,
+    "relevance_reason": "..."
+  }},
+  ...
+]
+```
+
+**关键要求**：
+- 必须传入论文的所有元数据字段，特别是 pdf_path（必须原样传入，不能省略）
+- 只输出 relevant=true 的论文
+- 必须输出完整 JSON 数组，不要有其他解释性文字""",
         agent=filter_agent,
         expected_output="筛选后的相关论文列表",
         context=[searcher_task] if skip_router else [searcher_task],
@@ -231,20 +247,23 @@ Gap 分析重点: {gap_direction if gap_direction else '全部类型（分析所
 研究主题: {topic}
 {gap_focus_note}
 
+**数据来源**：筛选出的相关论文元数据（含 pdf_path）来自上游 Filter 任务的输出，该输出包含每篇论文的完整元数据（id、title、authors、year、abstract、pdf_path 等）。
+
 对于筛选出的相关论文：
-1. 使用 pdf_to_text 工具提取论文文本（前10页），PDF 文件在 {papers_dir} 目录下。
+1. 使用 pdf_to_text 工具提取论文文本（前10页），**PDF 文件路径从 Filter 输出中的 pdf_path 字段获取**，直接将该路径传给 pdf_to_text 工具即可。不要自行构造路径，不要猜测文件名。
 2. 使用 identify_gap 工具识别 gap，**必须传入以下参数**：
-   - paper_title: 论文标题（从论文搜索结果中获取）
-   - paper_authors: 论文作者（从论文搜索结果中获取，格式如 "Nils Beutling, Maja Spahic-Bogdanovic"）
-   - paper_year: 论文年份（从论文搜索结果中获取）
+   - paper_title: 论文标题（从 Filter 输出中获取）
+   - paper_authors: 论文作者（从 Filter 输出中获取，格式如 "Nils Beutling, Maja Spahic-Bogdanovic"）
+   - paper_year: 论文年份（从 Filter 输出中获取）
    - paper_text: 提取的 PDF 文本
    - gap_direction: "{gap_direction}"
 3. 返回每篇论文的 gap 分析结果（JSON 格式），包含 paper_title、paper_authors、paper_year 和 gaps 字段。
 
 重要约束：
-- **只分析有本地 PDF 文件的论文**。如果某篇论文没有 PDF 文件（在 {papers_dir} 目录下找不到对应的 .pdf 文件），则该论文应标记为"跳过：无PDF文件"，不要尝试猜测文件名或基于标题/摘要编造分析结果。
+- **必须使用 Filter 输出中的 pdf_path**：pdf_path 字段包含完整的本地 PDF 路径（如 "D:\\Agent_survey4\\outputs\\...\\papers\\2307.02157.pdf" 或 "D:\\Agent_survey4\\outputs\\...\\papers\\d70a6a2473418acdd2d3d3815854d856421bce00.pdf"），**必须原样传入 pdf_to_text 工具**，不要做任何修改。
+- **只分析有本地 PDF 文件的论文**。如果某篇论文的 pdf_path 为空、指向不存在的文件、或为错误信息（如 "Error: ..."），则该论文应标记为"跳过：无PDF文件"，不要尝试猜测文件名或基于标题/摘要编造分析结果。
 - **禁止编造 gap 分析**。如果无法从 PDF 提取论文正文，必须如实说明论文无法分析（跳过），绝不能基于论文标题或摘要推断 gap 内容。
-- **必须传入 authors 和 year**：identify_gap 工具已支持 paper_authors 和 paper_year 参数，调用时必须填入从搜索结果中获取的元数据。
+- **必须传入 authors 和 year**：identify_gap 工具已支持 paper_authors 和 paper_year 参数，调用时必须填入从 Filter 输出中获取的元数据。
 - 如果所有相关论文都没有 PDF 文件，则应返回明确的失败状态，并说明原因：所有论文的 PDF 均无法获取，无法进行 gap 分析。
 - 只有成功提取了 PDF 文本的论文才能进入 gap 分析环节。
 
@@ -426,9 +445,6 @@ def run_research_gap_analysis(
         for k, v in parsed.items():
             if v is not None and v != "":
                 default_inputs[k] = v
-        # search_query 直接使用 topic，不再单独生成
-        if default_inputs.get("topic"):
-            default_inputs["search_query"] = default_inputs["topic"]
         # max_results 转字符串（crew kickoff 需要）
         if isinstance(default_inputs.get("max_results"), (int, float)):
             default_inputs["max_results"] = str(int(default_inputs["max_results"]))

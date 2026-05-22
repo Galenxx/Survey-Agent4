@@ -5,7 +5,7 @@ from typing import Any
 
 
 def create_filter_agent(tools: list[Any] | None = None, llm=None):
-    """Create Filter Agent (uses deepseek-v4-pro, thinking disabled)."""
+    """Create Filter Agent (uses deepseek-v4-pro, function-calling enabled)."""
     if llm is None:
         llm = OpenAICompatibleCompletion(
             model="deepseek-v4-pro",
@@ -21,4 +21,5 @@ def create_filter_agent(tools: list[Any] | None = None, llm=None):
         allow_delegation=False,
         tools=tools,
         llm=llm,
+        function_calling_llm=llm,
     )

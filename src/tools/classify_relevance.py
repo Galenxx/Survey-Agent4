@@ -1,27 +1,53 @@
 """论文相关性分类工具"""
 import json
+from typing import Any, Dict
 from crewai.tools import BaseTool
 from pydantic import Field
 from crewai.llms.providers.openai_compatible.completion import OpenAICompatibleCompletion
 
 
 class RelevanceClassifierTool(BaseTool):
-    """使用 LLM 判断论文与研究主题的相关性"""
+    """使用 LLM 判断论文与研究主题的相关性，返回完整论文元数据（含 pdf_path）"""
 
     name: str = "classify_relevance"
-    description: str = "判断论文是否与研究主题相关，返回 JSON 格式结果"
+    description: str = (
+        "判断论文是否与研究主题相关。传入完整论文元数据（id、title、authors、year、abstract、pdf_path 等），"
+        "返回论文元数据 + 相关性判断结果（JSON 格式）。"
+    )
 
-    def _run(self, paper_title: str, paper_abstract: str, research_topic: str) -> str:
+    def _run(
+        self,
+        paper_title: str,
+        paper_abstract: str,
+        research_topic: str,
+        paper_id: str = "",
+        arxiv_id: str = "",
+        authors: str = "",
+        year: str = "",
+        pdf_path: str = "",
+        pdf_url: str = "",
+        source: str = "",
+        citation_count: int = 0,
+        **kwargs: Any,
+    ) -> str:
         """
-        判断论文相关性
+        判断论文相关性，同时原样返回论文完整元数据
 
         Args:
             paper_title: 论文标题
             paper_abstract: 论文摘要
             research_topic: 研究主题描述
+            paper_id: 论文 ID
+            arxiv_id: arXiv ID
+            authors: 作者（字符串格式）
+            year: 发表年份
+            pdf_path: PDF 本地路径
+            pdf_url: PDF 下载链接
+            source: 来源（semantic_scholar 或 arxiv）
+            citation_count: 引用数
 
         Returns:
-            JSON: {"relevant": true/false, "reason": "判断理由"}
+            JSON: 包含完整论文元数据 + 相关性判断结果
         """
         llm = OpenAICompatibleCompletion(
             model="deepseek-v4-pro",
@@ -57,7 +83,36 @@ class RelevanceClassifierTool(BaseTool):
                 result_text = result_text[:-3]
 
             result = json.loads(result_text.strip())
-            return json.dumps(result, ensure_ascii=False)
+
+            # 合并论文元数据 + 相关性判断结果，原样返回
+            output: Dict[str, Any] = {
+                "id": paper_id,
+                "arxiv_id": arxiv_id,
+                "title": paper_title,
+                "authors": authors,
+                "year": year,
+                "abstract": paper_abstract,
+                "pdf_path": pdf_path,
+                "pdf_url": pdf_url,
+                "source": source,
+                "citation_count": citation_count,
+                "relevant": result.get("relevant", False),
+                "relevance_reason": result.get("reason", ""),
+            }
+            return json.dumps(output, ensure_ascii=False, indent=2)
 
         except Exception as e:
-            return json.dumps({"relevant": False, "reason": f"Error: {str(e)}"}, ensure_ascii=False)
+            return json.dumps({
+                "id": paper_id,
+                "arxiv_id": arxiv_id,
+                "title": paper_title,
+                "authors": authors,
+                "year": year,
+                "abstract": paper_abstract,
+                "pdf_path": pdf_path,
+                "pdf_url": pdf_url,
+                "source": source,
+                "citation_count": citation_count,
+                "relevant": False,
+                "relevance_reason": f"Error: {str(e)}",
+            }, ensure_ascii=False, indent=2)

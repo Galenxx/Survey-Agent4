@@ -94,7 +94,9 @@ class GapIdentifierTool(BaseTool):
   }}
 }}
 
-只返回 JSON，不要有其他内容。必须确保 paper_authors 和 paper_year 字段与输入保持一致。"""
+只返回 JSON，不要有其他内容。必须确保 paper_authors 和 paper_year 字段与输入保持一致。
+
+**重要**：所有 gap 的 description 字段必须使用**中文**撰写，不要使用英文。"""
 
         try:
             result_text = llm.call(prompt)
