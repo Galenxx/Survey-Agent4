@@ -1,10 +1,7 @@
 """任务隔离存储模块"""
 import os
 import json
-import uuid
 from datetime import datetime
-from typing import Optional
-from slugify import slugify
 
 
 class TaskStorage:
@@ -13,7 +10,8 @@ class TaskStorage:
     def __init__(self, task_name: str, base_dir: str = "outputs"):
         self.task_name = task_name
         self.base_dir = base_dir
-        self.task_id = datetime.now().strftime("%Y-%m-%d_%H%M%S") + "_" + slugify(task_name)
+        self.start_time = datetime.now()
+        self.task_id = self.start_time.strftime("%Y-%m-%d_%H%M%S")
         self.task_dir = os.path.join(base_dir, self.task_id)
 
         self.logs_dir = os.path.join(self.task_dir, "logs")

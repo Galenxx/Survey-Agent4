@@ -51,3 +51,35 @@
            overflow-auto max-h-96 leading-relaxed;
   }
 }
+
+/* Table border override — ensures cells have visible borders with border-collapse */
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.prose table th,
+.prose table td {
+  border: 1px solid #e2e8f0;
+  padding: 0.625rem 1rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.prose table th {
+  background-color: #f1f5f9;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #334155;
+}
+
+.prose table td {
+  font-size: 0.875rem;
+  color: #334155;
+}
+
+.prose table tr:not(:last-child) td {
+  border-bottom: 1px solid #e2e8f0;
+}

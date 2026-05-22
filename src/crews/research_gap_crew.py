@@ -7,7 +7,7 @@
 """
 import json
 import os
-from crewai import Crew, Task, Agent
+from crewai import Crew, Task, Agent, Process
 from crewai.llms.providers.openai_compatible.completion import OpenAICompatibleCompletion
 from typing import Dict, Any
 
@@ -199,9 +199,62 @@ Gap 分析重点: {gap_direction if gap_direction else '全部类型（分析所
 研究主题: {topic}
 Gap 分析重点: {gap_direction if gap_direction else '全部六类 gap'}
 
-1. 读取所有论文的 gap 分析结果
-2. 按 gap 类型分类汇总
-3. 生成结构化的 Markdown 报告
+请严格按照以下结构生成报告，不要偏离格式：
+
+# 研究 Gap 分析报告
+
+（自动生成，包含生成时间）
+
+## 1. 报告元信息
+
+使用 Markdown 表格，包含：研究主题、Gap 分析方向、分析日期、总相关论文数、已分析论文数等。
+
+## 2. 研究概述
+
+2-3段文字描述分析背景和总体发现。
+
+## 3. Gap 分析结果总览
+
+### 3.1 总体统计
+
+使用无序列表，包含：已分析论文数、存在方法论空白的论文数、识别的关键 Gap 主题数。
+
+### 3.2 Gap 主题分布概览
+
+使用 Markdown 表格，列：序号、Gap 主题、涉及论文数、涉及论文。
+
+## 4. 按 Gap 主题分类的详细分析
+
+对每个 Gap 主题，使用以下结构：
+
+### 主题X：主题名称
+
+**核心问题**：一句话描述核心问题。
+
+---
+
+#### 论文标题（去掉编号和emoji）
+
+- **作者**：xxx
+- **年份**：xxxx
+- **Gap 描述**：
+
+  （Gap 描述的详细文本，使用缩进）
+
+注意：
+- 论文标题是 H4，前面不要有列表符号
+- 作者、年份、Gap 描述是同一级别的列表项（都用 `-` 开头），都在论文标题后面
+- Gap 描述后面跟缩进的正文，不要嵌套额外的列表
+- 不要重复任何内容
+- 不要在标题里加粗或使用特殊符号（只用纯文本标题）
+
+## 5. 未分析论文说明（如有）
+
+## 6. 研究发现总结与未来方向建议
+
+## 附录：论文索引
+
+---
 
 报告路径: {task_storage.get_report_path()}
 
@@ -211,17 +264,19 @@ Gap 分析重点: {gap_direction if gap_direction else '全部六类 gap'}
         context=[analyzer_task],
     )
 
-    # 组装 agents 和 tasks
-    agents = [manager, searcher, filter_agent, analyzer, synthesizer]
+    # 组装 agents 和 tasks（Manager 不放入 agents 列表，由 manager_agent 单独指定）
+    # 注意：hierarchical 模式下 manager 只能通过 manager_agent 指定，不能放在 agents 列表中
+    worker_agents = [searcher, filter_agent, analyzer, synthesizer]
     tasks = [searcher_task, filter_task, analyzer_task, synthesizer_task]
     if not skip_router:
-        agents.insert(1, router)
+        worker_agents.insert(0, router)
         tasks.insert(0, router_task)
 
     crew = Crew(
-        agents=agents,
+        agents=worker_agents,
         tasks=tasks,
         manager_agent=manager,
+        process=Process.hierarchical,
         verbose=True,
     )
 
@@ -271,7 +326,7 @@ def run_research_gap_analysis(
 请理解用户意图，从用户输入中提取或生成以下字段，输出为纯 JSON：
 {{
   "topic": "研究主题（必填，从用户输入中提取的核心研究主题，用于后续 gap 分析。注意：topic 应该只是研究对象/领域，不要包含 gap 类型方向。例如用户输入「LLM的methodological gap」，topic 应填「Large Language Model」，gap_direction 填「Methodological Gap」）",
-  "search_query": "检索关键词（必填，提取或生成最能代表用户研究意图的英文搜索词，不要包含 gap 类型词如「gap」）",
+  "search_query": "检索关键词（必填，基于 topic 生成最能代表用户研究意图的英文搜索词，不要包含任何 gap 类型相关词汇，如 gap、methodology、methodological、knowledge、evidence、theoretical、population、contextual、temporal 等，不要添加 gap 类型方向信息）",
   "gap_direction": "Gap 类型方向（可选，若用户明确指定了 gap 类型则填入，否则使用空字符串。可识别的英文关键词包括：methodological/methodology/method → Methodological Gap，knowledge/theory/conceptual → Knowledge Gap，empirical/evidence/experimental → Evidence Gap，theoretical/theory/foundation → Theoretical Gap，population/people/user/group → Population Gap，contextual/temporal/time/context → Contextual/Time Gap。中文关键词同理）",
   "time_range": "年份范围（可选，格式如 "2022-" 或 "2020-2026"，若用户未指定则使用默认值 "2020-"）",
   "max_results": 最大检索数量（可选，整数，若用户未指定则使用默认值 50）
@@ -305,6 +360,9 @@ def run_research_gap_analysis(
         for k, v in parsed.items():
             if v is not None and v != "":
                 default_inputs[k] = v
+        # search_query 直接使用 topic，不再单独生成
+        if default_inputs.get("topic"):
+            default_inputs["search_query"] = default_inputs["topic"]
         # max_results 转字符串（crew kickoff 需要）
         if isinstance(default_inputs.get("max_results"), (int, float)):
             default_inputs["max_results"] = str(int(default_inputs["max_results"]))
