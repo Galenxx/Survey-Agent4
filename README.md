@@ -44,11 +44,11 @@ Research Gap Analysis takes a natural-language research query and returns a stru
 │          Core Engine  (src/)                │
 │                                             │
 │  Manager Agent (Zhipu GLM-5.1)             │
-│   └──  Worker Agents (DeepSeek Chat)        │
+│   └──  Worker Agents (DeepSeek V4 Pro)        │
 │        ├── Router    — Parse query          │
 │        ├── Searcher  — Search papers         │
 │        ├── Filter    — Classify relevance    │
-│        ├── Analyzer  — Identify gaps         │
+│        ├── Analyzer  — Identify gaps (max reasoning) │
 │        └── Synthesizer — Write report        │
 └─────────────────────────────────────────────┘
 ```
@@ -152,7 +152,7 @@ outputs/2026-05-22_120000/
 | Layer | Technology |
 |-------|-----------|
 | Multi-Agent Framework | CrewAI 0.80+ |
-| Worker LLM | DeepSeek Chat |
+| Worker LLM | DeepSeek V4 Pro (thinking: off; Analyzer: max reasoning) |
 | Manager LLM | Zhipu GLM-5.1 (DashScope) |
 | Paper Search | Semantic Scholar API + arXiv |
 | PDF Processing | pdfplumber |
@@ -204,12 +204,12 @@ Research Gap Analysis 是一个 AI 驱动的多智能体系统，可自动分析
 │          核心引擎  (src/)                   │
 │                                             │
 │  Manager Agent (Zhipu GLM-5.1)              │
-│   └──  Worker Agents (DeepSeek Chat)       │
+│   └──  Worker Agents (DeepSeek V4 Pro)       │
 │        ├── Router      — 解析查询            │
 │        ├── Searcher    — 检索论文            │
-│        ├── Filter      — 相关性分类          │
-│        ├── Analyzer    — 识别 Gap           │
-│        └── Synthesizer — 生成报告           │
+│        ├── Filter      — 相关性分类           │
+│        ├── Analyzer    — 识别 Gap (max深度思考) │
+│        └── Synthesizer — 生成报告            │
 └─────────────────────────────────────────────┘
 ```
 
@@ -312,7 +312,7 @@ outputs/2026-05-22_120000/
 | 层级 | 技术 |
 |------|------|
 | 多智能体框架 | CrewAI 0.80+ |
-| Worker LLM | DeepSeek Chat |
+| Worker LLM | DeepSeek V4 Pro（思考模式：关闭；Analyzer：max 深度思考） |
 | Manager LLM | Zhipu GLM-5.1（DashScope） |
 | 论文检索 | Semantic Scholar API + arXiv |
 | PDF 处理 | pdfplumber |

@@ -24,8 +24,9 @@ class RelevanceClassifierTool(BaseTool):
             JSON: {"relevant": true/false, "reason": "判断理由"}
         """
         llm = OpenAICompatibleCompletion(
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             provider="deepseek",
+            extra_body={"thinking": {"type": "disabled"}},
             temperature=0,
         )
 

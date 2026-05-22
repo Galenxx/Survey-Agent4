@@ -1,7 +1,7 @@
 """Research Gap Crew - 研究 Gap 分析工作流
 
 设计原则:
-  - Manager Agent (GLM-4): 总协调，通过 CrewAI 的 manager_agent 机制真正参与决策
+  - Manager Agent (GLM-5.1): 总协调，通过 CrewAI 的 manager_agent 机制真正参与决策
   - Router Agent (DeepSeek): 用户意图解析，生成结构化参数
   - Searcher/Filter/Analyzer/Synthesizer (DeepSeek): 实际执行搜索、筛选、分析、报告生成
 """
@@ -19,6 +19,7 @@ from src.agents.analyzer_agent import create_analyzer_agent
 from src.agents.synthesizer_agent import create_synthesizer_agent
 from src.tools import (
     SemanticScholarSearchTool,
+    ArxivSearchTool,
     PdfDownloadTool,
     PdfToTextTool,
     RelevanceClassifierTool,
@@ -30,11 +31,19 @@ from src.storage.task_storage import TaskStorage
 from backend.services.crew_executor import parse_router_output, broadcast_event
 
 
-def _deepseek_llm():
-    """创建 DeepSeek LLM 实例（供所有 Worker Agents 使用）"""
+def _deepseek_llm(thinking: bool = False, reasoning_effort: str = "high"):
+    """Create DeepSeek LLM instance (used by all Worker Agents).
+
+    Args:
+        thinking: Whether to enable thinking mode. Defaults to False.
+        reasoning_effort: Reasoning effort when thinking mode is enabled.
+            Use "max" for analyzer (deep analysis), "high" or "low" for others.
+    """
     return OpenAICompatibleCompletion(
-        model="deepseek-chat",
+        model="deepseek-v4-pro",
         provider="deepseek",
+        reasoning_effort=reasoning_effort,
+        extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}},
         temperature=0,
     )
 
@@ -55,6 +64,8 @@ def _wrap_tools(agent_key: str, task_storage: TaskStorage, papers_dir: str, tool
     """为指定 agent 包装工具实例（带日志记录）"""
     def _inst(t_cls):
         if t_cls == PdfDownloadTool:
+            return t_cls(output_dir=papers_dir)
+        if t_cls == ArxivSearchTool:
             return t_cls(output_dir=papers_dir)
         return t_cls()
     return [wrap_tool_for_logging(_inst(t), agent_key=agent_key, task_storage=task_storage) for t in tool_list]
@@ -93,16 +104,17 @@ def create_research_gap_crew(
         f"Creating crew with: topic={topic}, search_query={search_query}, "
         f"gap_direction={gap_direction}, time_range={time_range}, max_results={max_results}")
 
-    # Manager: GLM-4 做总协调
+    # Manager: GLM-5.1 做总协调
     manager_llm = _glm_llm(glm_api_key)
     manager = create_manager_agent(llm=manager_llm)
 
-    # Workers: DeepSeek 做具体分析
-    worker_llm = _deepseek_llm()
+    # Workers: DeepSeek (thinking disabled by default; analyzer uses max reasoning)
+    worker_llm = _deepseek_llm(thinking=False)
+    analyzer_llm = _deepseek_llm(thinking=True, reasoning_effort="max")
 
     router_tools = _wrap_tools("router", task_storage, papers_dir, [])
     searcher_tools = _wrap_tools("searcher", task_storage, papers_dir,
-        [SemanticScholarSearchTool, PdfDownloadTool])
+        [SemanticScholarSearchTool, ArxivSearchTool, PdfDownloadTool])
     filter_tools = _wrap_tools("filter", task_storage, papers_dir,
         [RelevanceClassifierTool])
     analyzer_tools = _wrap_tools("analyzer", task_storage, papers_dir,
@@ -113,7 +125,7 @@ def create_research_gap_crew(
     router = create_router_agent(tools=router_tools, llm=worker_llm)
     searcher = create_searcher_agent(tools=searcher_tools, llm=worker_llm)
     filter_agent = create_filter_agent(tools=filter_tools, llm=worker_llm)
-    analyzer = create_analyzer_agent(tools=analyzer_tools, llm=worker_llm)
+    analyzer = create_analyzer_agent(tools=analyzer_tools, llm=analyzer_llm)
     synthesizer = create_synthesizer_agent(tools=synthesizer_tools, llm=worker_llm)
 
     # Router Task: 仅在需要时创建
@@ -137,19 +149,57 @@ def create_research_gap_crew(
 
     # Searcher Task: 接收解析好的参数，直接执行
     searcher_task = Task(
-        description=f"""根据以下参数检索并下载学术论文。
+        description=f"""根据以下参数检索并下载学术论文（使用两个数据源）。
 
 检索关键词: {search_query}
 年份范围: {time_range}
 最大检索数量: {max_results}
 
-请使用 semantic_scholar_search 工具搜索相关论文。
-搜索返回后，对每篇论文检查 pdf_url，使用 pdf_download 工具下载 PDF。
-将下载的论文 PDF 保存到目录: {papers_dir}
+请按以下步骤执行：
 
-最后返回完整的论文列表（包含 ID、标题、摘要、作者、年份、引用量、PDF 路径等）。""",
+1. 使用 semantic_scholar_search 工具搜索 Semantic Scholar 论文数据库。
+2. 使用 arxiv_search 工具搜索 arXiv 论文数据库。
+3. 对两个数据源的搜索结果进行去重（按论文标题或 arXiv ID 精确匹配去重）。
+4. 对去重后的论文，逐篇检查是否有 PDF 下载链接或本地路径：
+   - 如果有 pdf_url，使用 pdf_download 工具下载 PDF。
+   - 如果论文已有本地 PDF 文件（在 papers_dir 目录下），直接使用已有文件。
+   - 如果没有 PDF 链接且无法下载，则标记该论文为"仅摘要"（不含 PDF）。
+5. 将下载的论文 PDF 保存到目录: {papers_dir}
+
+**输出格式要求**：
+完成所有搜索和下载后，你必须返回一段**纯 JSON** 文本作为最终输出（不要有其他解释性文字）。JSON 结构如下：
+
+{{
+  "dedup_stats": {{
+    "total_deduplicated": <去重后的论文总数>,
+    "with_pdf": <有 PDF 的论文数>,
+    "without_pdf": <无 PDF 的论文数>,
+    "from_semantic_scholar": <来自 S2 的论文数>,
+    "from_arxiv": <来自 arXiv 的论文数>
+  }},
+  "papers": [
+    {{
+      "id": "<论文 ID（首选 arXiv ID）>",
+      "arxiv_id": "<arXiv ID（如有）>",
+      "title": "<论文标题>",
+      "authors": "<所有作者，格式：First Last, First Last, ...>",
+      "year": "<发表年份>",
+      "abstract": "<摘要>",
+      "citation_count": <引用数>,
+      "pdf_path": "<本地 PDF 路径（如有）>",
+      "pdf_url": "<PDF 下载链接（如有）>",
+      "source": "<semantic_scholar 或 arxiv>"
+    }}
+  ]
+}}
+
+**关键要求**：
+- **必须对所有19篇论文都输出**，包括有 PDF 和没有 PDF 的
+- authors 字段必须是字符串，格式："Name1, Name2, Name3"
+- year 字段必须是字符串或数字，不能为空
+- 所有论文都必须列出，不能遗漏任何一篇""",
         agent=searcher,
-        expected_output="论文列表，包含论文 ID、标题、摘要、作者、发布日期、PDF 路径等",
+        expected_output="纯 JSON 格式的论文列表（无其他文字），包含所有去重后论文的元数据（ID、标题、作者、年份、摘要、PDF路径、来源）和去重统计",
     )
 
     # Filter Task: 接收解析好的参数，直接执行
@@ -182,13 +232,25 @@ Gap 分析重点: {gap_direction if gap_direction else '全部类型（分析所
 {gap_focus_note}
 
 对于筛选出的相关论文：
-1. 使用 pdf_to_text 工具提取论文文本（前10页），PDF 文件在 {papers_dir} 目录下
-2. 使用 identify_gap 工具识别 gap（gap_direction 参数传入 "{gap_direction}"）
-3. 返回每篇论文的 gap 分析结果
+1. 使用 pdf_to_text 工具提取论文文本（前10页），PDF 文件在 {papers_dir} 目录下。
+2. 使用 identify_gap 工具识别 gap，**必须传入以下参数**：
+   - paper_title: 论文标题（从论文搜索结果中获取）
+   - paper_authors: 论文作者（从论文搜索结果中获取，格式如 "Nils Beutling, Maja Spahic-Bogdanovic"）
+   - paper_year: 论文年份（从论文搜索结果中获取）
+   - paper_text: 提取的 PDF 文本
+   - gap_direction: "{gap_direction}"
+3. 返回每篇论文的 gap 分析结果（JSON 格式），包含 paper_title、paper_authors、paper_year 和 gaps 字段。
 
-请使用 pdf_to_text 和 identify_gap 工具分析每篇论文的 gap。""",
+重要约束：
+- **只分析有本地 PDF 文件的论文**。如果某篇论文没有 PDF 文件（在 {papers_dir} 目录下找不到对应的 .pdf 文件），则该论文应标记为"跳过：无PDF文件"，不要尝试猜测文件名或基于标题/摘要编造分析结果。
+- **禁止编造 gap 分析**。如果无法从 PDF 提取论文正文，必须如实说明论文无法分析（跳过），绝不能基于论文标题或摘要推断 gap 内容。
+- **必须传入 authors 和 year**：identify_gap 工具已支持 paper_authors 和 paper_year 参数，调用时必须填入从搜索结果中获取的元数据。
+- 如果所有相关论文都没有 PDF 文件，则应返回明确的失败状态，并说明原因：所有论文的 PDF 均无法获取，无法进行 gap 分析。
+- 只有成功提取了 PDF 文本的论文才能进入 gap 分析环节。
+
+请使用 pdf_to_text 和 identify_gap 工具分析每篇论文的 gap，确保每条分析结果都包含 paper_title、paper_authors、paper_year 和 gaps 字段。""",
         agent=analyzer,
-        expected_output="论文 gap 分析结果列表（JSON 格式）",
+        expected_output="论文 gap 分析结果列表（JSON 格式），每条结果必须包含：paper_title、paper_authors、paper_year、gaps，以及被跳过的论文（无 PDF）列表",
         context=[filter_task],
     )
 
@@ -207,7 +269,7 @@ Gap 分析重点: {gap_direction if gap_direction else '全部六类 gap'}
 
 ## 1. 报告元信息
 
-使用 Markdown 表格，包含：研究主题、Gap 分析方向、分析日期、总相关论文数、已分析论文数等。
+使用 Markdown 表格，包含：研究主题、Gap 分析方向、分析日期、总相关论文数、已分析论文数、无 PDF 跳过论文数等。
 
 ## 2. 研究概述
 
@@ -217,7 +279,7 @@ Gap 分析重点: {gap_direction if gap_direction else '全部六类 gap'}
 
 ### 3.1 总体统计
 
-使用无序列表，包含：已分析论文数、存在方法论空白的论文数、识别的关键 Gap 主题数。
+使用无序列表，包含：已分析论文数、无 PDF 跳过的论文数、存在 gap 的论文数、识别的关键 Gap 主题数。
 
 ### 3.2 Gap 主题分布概览
 
@@ -235,20 +297,24 @@ Gap 分析重点: {gap_direction if gap_direction else '全部六类 gap'}
 
 #### 论文标题（去掉编号和emoji）
 
-- **作者**：xxx
-- **年份**：xxxx
+- **作者**：必须使用 analyze 环节传入的 paper_authors 字段值，不要留空或自行推断。
+- **年份**：必须使用 analyze 环节传入的 paper_year 字段值，不要留空或自行推断。
 - **Gap 描述**：
 
   （Gap 描述的详细文本，使用缩进）
 
 注意：
 - 论文标题是 H4，前面不要有列表符号
-- 作者、年份、Gap 描述是同一级别的列表项（都用 `-` 开头），都在论文标题后面
+- **作者和年份必须直接使用传入数据**，即使为空也如实写"未提供"，不要自行推断
+- Gap 描述是同一级别的列表项（都用 `-` 开头）
 - Gap 描述后面跟缩进的正文，不要嵌套额外的列表
 - 不要重复任何内容
 - 不要在标题里加粗或使用特殊符号（只用纯文本标题）
 
 ## 5. 未分析论文说明（如有）
+
+列出所有因缺少 PDF 而被跳过的论文，包括论文标题和跳过原因。
+如果所有论文都被成功分析，则本节填写"无"。
 
 ## 6. 研究发现总结与未来方向建议
 
@@ -260,7 +326,7 @@ Gap 分析重点: {gap_direction if gap_direction else '全部六类 gap'}
 
 请使用 write_report 工具将分析结果写入报告文件。""",
         agent=synthesizer,
-        expected_output="Markdown 格式的研究报告（已写入文件）",
+        expected_output="Markdown 格式的研究报告（已写入文件），包含成功分析的论文 gap 结果和被跳过论文的说明",
         context=[analyzer_task],
     )
 
@@ -294,7 +360,7 @@ def run_research_gap_analysis(
     Args:
         user_input: 用户输入的自然语言研究需求
         task_storage: 任务存储实例
-        use_glm_for_router: 是否用 GLM-4 做 Router 解析（默认 False，用 DeepSeek）
+        use_glm_for_router: 是否用 GLM-5.1 做 Router 解析（默认 False，用 DeepSeek）
 
     Returns:
         执行结果字典
@@ -315,8 +381,8 @@ def run_research_gap_analysis(
         # Router 走直接 LLM 调用（不通过 crew），更可靠
         task_storage.log("manager", "SYSTEM", "Step 1: Running Router Agent to parse user input...")
 
-        router_llm = _glm_llm(glm_api_key) if use_glm_for_router else _deepseek_llm()
-        router_provider = "GLM-4" if use_glm_for_router else "DeepSeek"
+        router_llm = _glm_llm(glm_api_key) if use_glm_for_router else _deepseek_llm(thinking=False)
+        router_provider = "GLM-5.1" if use_glm_for_router else "DeepSeek"
         task_storage.log("manager", "SYSTEM", f"Router using: {router_provider}")
 
         router_prompt = f"""分析用户的研究需求，生成结构化的搜索查询参数。
@@ -393,9 +459,9 @@ def run_research_gap_analysis(
             f"time_range={default_inputs['time_range']}, "
             f"max_results={default_inputs['max_results']}")
 
-        # ── Step 4: 创建并运行 Crew（Manager=GLM-4, Workers=DeepSeek）──
+        # ── Step 4: 创建并运行 Crew（Manager=GLM-5.1, Workers=DeepSeek）──
         task_storage.log("manager", "SYSTEM",
-            "Step 2: Running Crew (Manager=GLM-4, Workers=DeepSeek)...")
+            "Step 2: Running Crew (Manager=GLM-5.1, Workers=DeepSeek)...")
         crew = create_research_gap_crew(
             task_storage=task_storage,
             papers_dir=papers_dir,

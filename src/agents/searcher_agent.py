@@ -5,11 +5,12 @@ from typing import Any
 
 
 def create_searcher_agent(tools: list[Any] | None = None, llm=None):
-    """创建 Searcher Agent（默认使用 deepseek-chat）"""
+    """Create Searcher Agent (uses deepseek-v4-pro, thinking disabled)."""
     if llm is None:
         llm = OpenAICompatibleCompletion(
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             provider="deepseek",
+            extra_body={"thinking": {"type": "disabled"}},
             temperature=0,
         )
     return Agent(

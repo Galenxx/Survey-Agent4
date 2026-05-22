@@ -37,7 +37,7 @@ def read_agent_log(task_id: str, agent: str) -> str:
     path = _task_dir(task_id) / "logs" / f"{agent}.log"
     if not path.exists():
         return ""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
 
 

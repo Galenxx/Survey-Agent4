@@ -8,7 +8,7 @@ load_dotenv()
 
 
 def create_manager_agent(llm=None):
-    """创建 Manager Agent（默认使用 GLM-4 协调）"""
+    """创建 Manager Agent（默认使用 GLM-5.1 协调）"""
     if llm is None:
         llm = OpenAICompatibleCompletion(
             model="glm-5.1",

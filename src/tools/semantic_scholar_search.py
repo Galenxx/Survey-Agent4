@@ -7,6 +7,20 @@ import requests
 from crewai.tools import BaseTool
 
 
+def _rate_limited_request(url: str, params: dict, headers: dict, timeout: int = 30) -> requests.Response:
+    """发送 HTTP 请求，自动处理 Rate Limit（指数退避重试）"""
+    max_retries = 5
+    base_delay = 2
+    for attempt in range(max_retries):
+        response = requests.get(url, params=params, headers=headers, timeout=timeout)
+        if response.status_code == 429:
+            retry_after = int(response.headers.get("Retry-After", base_delay * (2 ** attempt)))
+            time.sleep(retry_after)
+            continue
+        return response
+    return response
+
+
 class SemanticScholarSearchTool(BaseTool):
     """搜索 Semantic Scholar 论文数据库，只返回有可下载 PDF 的论文"""
 
@@ -58,14 +72,13 @@ class SemanticScholarSearchTool(BaseTool):
                 if token:
                     params["token"] = token
 
-                response = requests.get(base_url, params=params, headers=headers, timeout=30)
-
-                if response.status_code == 429:
-                    wait_time = int(response.headers.get("Retry-After", 5))
-                    return f"Rate limited. Retry after {wait_time} seconds."
+                response = _rate_limited_request(base_url, params=params, headers=headers, timeout=30)
 
                 if response.status_code == 401:
                     return "Semantic Scholar API authentication failed. Check your API key."
+
+                if response.status_code == 429:
+                    return "Semantic Scholar API is heavily rate limited. Please try again later."
 
                 if response.status_code != 200:
                     return f"Semantic Scholar API error: {response.status_code}"
@@ -115,6 +128,7 @@ class SemanticScholarSearchTool(BaseTool):
                     time.sleep(1.1)
 
             result = {
+                "source": "semantic_scholar",
                 "total": total,
                 "retrieved": len(all_papers),
                 "papers": all_papers,

@@ -26,6 +26,8 @@ class GapIdentifierTool(BaseTool):
         paper_text: str,
         research_topic: str,
         gap_direction: str = "",
+        paper_authors: str = "",
+        paper_year: str = "",
     ) -> str:
         """
         识别 gap
@@ -35,13 +37,16 @@ class GapIdentifierTool(BaseTool):
             paper_text: 论文文本
             research_topic: 研究主题
             gap_direction: 指定要分析的 gap 类型，为空则分析全部六类
+            paper_authors: 论文作者列表（字符串）
+            paper_year: 论文发表年份
 
         Returns:
             JSON 格式的 gap 分析结果
         """
         llm = OpenAICompatibleCompletion(
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             provider="deepseek",
+            extra_body={"thinking": {"type": "disabled"}},
             temperature=0,
         )
 
@@ -69,6 +74,8 @@ class GapIdentifierTool(BaseTool):
 研究主题: {research_topic}
 
 论文标题: {paper_title}
+论文作者: {paper_authors if paper_authors else "未提供"}
+论文年份: {paper_year if paper_year else "未提供"}
 
 论文内容:
 {paper_text[:8000]}
@@ -79,13 +86,15 @@ class GapIdentifierTool(BaseTool):
 
 {json_note}
 {{
-  "paper_title": "论文标题",
+  "paper_title": "{paper_title}",
+  "paper_authors": "{paper_authors if paper_authors else ''}",
+  "paper_year": "{paper_year if paper_year else ''}",
   "gaps": {{
     {json_example}
   }}
 }}
 
-只返回 JSON，不要有其他内容。"""
+只返回 JSON，不要有其他内容。必须确保 paper_authors 和 paper_year 字段与输入保持一致。"""
 
         try:
             result_text = llm.call(prompt)

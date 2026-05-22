@@ -48,14 +48,14 @@ class TaskStorage:
         log_path = self.get_agent_log_path(agent_name)
         if not os.path.exists(log_path):
             return ""
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
 
     def log(self, agent_name: str, category: str, content: str):
         """保存 Agent 日志（单行格式：[时间] [类别] 内容）"""
         log_path = self.get_agent_log_path(agent_name)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8", errors="replace") as f:
             f.write(f"[{timestamp}] [{category}] {content}\n")
 
     def save_data(self, filename: str, data: dict):

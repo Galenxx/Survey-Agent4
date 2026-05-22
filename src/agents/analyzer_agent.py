@@ -5,11 +5,13 @@ from typing import Any
 
 
 def create_analyzer_agent(tools: list[Any] | None = None, llm=None):
-    """创建 Analyzer Agent（默认使用 deepseek-chat）"""
+    """Create Analyzer Agent (uses deepseek-v4-pro with max reasoning)."""
     if llm is None:
         llm = OpenAICompatibleCompletion(
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             provider="deepseek",
+            reasoning_effort="max",
+            extra_body={"thinking": {"type": "enabled"}},
             temperature=0,
         )
     return Agent(
